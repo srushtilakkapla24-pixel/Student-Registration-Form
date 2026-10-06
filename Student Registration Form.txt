@@ -1,0 +1,390 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "e0afd473",
+   "metadata": {},
+   "source": [
+    "# 🔧 Predictive Maintenance System\n",
+    "## AI4I 2020 Dataset – End-to-End ML Pipeline\n",
+    "\n",
+    "This notebook trains two classifiers (Random Forest & XGBoost) to predict machine failures.\n",
+    "All preprocessing, training, evaluation, and visualisation steps are shown inline."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ae34b06e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Install dependencies (uncomment if needed)\n",
+    "# !pip install scikit-learn xgboost imbalanced-learn pandas numpy matplotlib seaborn joblib"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "26a6709f",
+   "metadata": {},
+   "source": [
+    "## 1. Imports"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "81345005",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "import joblib\n",
+    "import warnings\n",
+    "warnings.filterwarnings(\"ignore\")\n",
+    "\n",
+    "from sklearn.model_selection import train_test_split\n",
+    "from sklearn.preprocessing import LabelEncoder\n",
+    "from sklearn.metrics import (\n",
+    "    accuracy_score, precision_score, recall_score,\n",
+    "    f1_score, classification_report, confusion_matrix, ConfusionMatrixDisplay\n",
+    ")\n",
+    "from sklearn.ensemble import RandomForestClassifier\n",
+    "from imblearn.over_sampling import SMOTE\n",
+    "from xgboost import XGBClassifier\n",
+    "\n",
+    "print(\"✅ All imports successful\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3f51da9d",
+   "metadata": {},
+   "source": [
+    "## 2. Load & Explore Data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "35546cdc",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df = pd.read_csv(\"ai4i2020.csv\")\n",
+    "print(f\"Shape: {df.shape}\")\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "893733cd",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(\"\n",
+    "Target distribution:\")\n",
+    "print(df[\"Machine failure\"].value_counts())\n",
+    "print(f\"\n",
+    "Failure rate: {df['Machine failure'].mean()*100:.2f}%\")\n",
+    "\n",
+    "# Distribution of failure\n",
+    "fig, ax = plt.subplots(figsize=(5, 3))\n",
+    "df[\"Machine failure\"].value_counts().plot(kind=\"bar\", ax=ax, color=[\"steelblue\",\"tomato\"])\n",
+    "ax.set_xticklabels([\"No Failure\", \"Failure\"], rotation=0)\n",
+    "ax.set_title(\"Target Class Distribution\")\n",
+    "ax.set_ylabel(\"Count\")\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e0c077fc",
+   "metadata": {},
+   "source": [
+    "## 3. Preprocessing"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "98b53202",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Drop identifier columns\n",
+    "df = df.drop(columns=[\"UDI\", \"Product ID\"])\n",
+    "\n",
+    "# Drop failure-subtype columns (data leakage)\n",
+    "leakage = [\"TWF\", \"HDF\", \"PWF\", \"OSF\", \"RNF\"]\n",
+    "df = df.drop(columns=leakage)\n",
+    "\n",
+    "# Encode categorical Type column\n",
+    "le = LabelEncoder()\n",
+    "df[\"Type\"] = le.fit_transform(df[\"Type\"])\n",
+    "print(\"Type encoding:\", dict(zip(le.classes_, le.transform(le.classes_))))\n",
+    "\n",
+    "# Sanitise column names for XGBoost (no brackets)\n",
+    "df.columns = [c.replace(\"[\",\"(\").replace(\"]\",\")\").replace(\"<\",\"lt\") for c in df.columns]\n",
+    "\n",
+    "X = df.drop(columns=[\"Machine failure\"])\n",
+    "y = df[\"Machine failure\"]\n",
+    "\n",
+    "print(f\"\n",
+    "Features: {X.columns.tolist()}\")\n",
+    "print(f\"X shape: {X.shape}, y shape: {y.shape}\")\n",
+    "df.describe()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f89af3df",
+   "metadata": {},
+   "source": [
+    "## 4. Train / Test Split + SMOTE"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6a08f5b8",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "X_train, X_test, y_train, y_test = train_test_split(\n",
+    "    X, y, test_size=0.2, random_state=42, stratify=y\n",
+    ")\n",
+    "print(f\"Train: {X_train.shape[0]} | Test: {X_test.shape[0]}\")\n",
+    "\n",
+    "# Apply SMOTE only on training data\n",
+    "smote = SMOTE(random_state=42)\n",
+    "X_train_res, y_train_res = smote.fit_resample(X_train, y_train)\n",
+    "print(f\"After SMOTE – Train: {X_train_res.shape[0]} ({y_train_res.value_counts().to_dict()})\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e0777446",
+   "metadata": {},
+   "source": [
+    "## 5. Model Training"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "903cb715",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Random Forest ────────────────────────────────────────────\n",
+    "rf = RandomForestClassifier(\n",
+    "    n_estimators=200, max_depth=10, min_samples_split=5,\n",
+    "    class_weight=\"balanced\", random_state=42, n_jobs=-1\n",
+    ")\n",
+    "rf.fit(X_train_res, y_train_res)\n",
+    "print(\"✅ Random Forest trained\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e2b1331f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── XGBoost ───────────────────────────────────────────────────\n",
+    "scale = (y_train_res == 0).sum() / (y_train_res == 1).sum()\n",
+    "xgb = XGBClassifier(\n",
+    "    n_estimators=300, max_depth=6, learning_rate=0.05,\n",
+    "    subsample=0.8, colsample_bytree=0.8,\n",
+    "    scale_pos_weight=scale,\n",
+    "    eval_metric=\"logloss\", random_state=42, n_jobs=-1\n",
+    ")\n",
+    "xgb.fit(X_train_res, y_train_res)\n",
+    "print(\"✅ XGBoost trained\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2ea4407b",
+   "metadata": {},
+   "source": [
+    "## 6. Evaluation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0ab3b132",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def evaluate(name, model, X_test, y_test):\n",
+    "    y_pred = model.predict(X_test)\n",
+    "    return {\n",
+    "        \"Model\":     name,\n",
+    "        \"Accuracy\":  accuracy_score(y_test, y_pred),\n",
+    "        \"Precision\": precision_score(y_test, y_pred, zero_division=0),\n",
+    "        \"Recall\":    recall_score(y_test, y_pred, zero_division=0),\n",
+    "        \"F1-Score\":  f1_score(y_test, y_pred, zero_division=0),\n",
+    "    }\n",
+    "\n",
+    "rf_m  = evaluate(\"Random Forest\", rf,  X_test, y_test)\n",
+    "xgb_m = evaluate(\"XGBoost\",       xgb, X_test, y_test)\n",
+    "\n",
+    "comparison = pd.DataFrame([rf_m, xgb_m]).set_index(\"Model\")\n",
+    "print(comparison.to_string())\n",
+    "comparison"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a98c2f3e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Full classification reports\n",
+    "for name, model in [(\"Random Forest\", rf), (\"XGBoost\", xgb)]:\n",
+    "    print(f\"\n",
+    "{'─'*50}\n",
+    "  {name}\n",
+    "{'─'*50}\")\n",
+    "    print(classification_report(y_test, model.predict(X_test), target_names=[\"No Failure\",\"Failure\"]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d0084a08",
+   "metadata": {},
+   "source": [
+    "## 7. Confusion Matrices"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a6839445",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, axes = plt.subplots(1, 2, figsize=(10, 4))\n",
+    "for ax, (name, model) in zip(axes, [(\"Random Forest\", rf), (\"XGBoost\", xgb)]):\n",
+    "    cm = confusion_matrix(y_test, model.predict(X_test))\n",
+    "    sns.heatmap(cm, annot=True, fmt=\"d\", cmap=\"Blues\", ax=ax,\n",
+    "                xticklabels=[\"No Failure\",\"Failure\"],\n",
+    "                yticklabels=[\"No Failure\",\"Failure\"])\n",
+    "    ax.set_title(f\"Confusion Matrix – {name}\", fontweight=\"bold\")\n",
+    "    ax.set_ylabel(\"Actual\"); ax.set_xlabel(\"Predicted\")\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9e13f673",
+   "metadata": {},
+   "source": [
+    "## 8. Feature Importance"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f753f931",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "feature_names = X.columns.tolist()\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(12, 4))\n",
+    "for ax, (name, model) in zip(axes, [(\"Random Forest\", rf), (\"XGBoost\", xgb)]):\n",
+    "    importances = model.feature_importances_\n",
+    "    idx = np.argsort(importances)[::-1]\n",
+    "    sns.barplot(x=importances[idx], y=[feature_names[i] for i in idx], palette=\"viridis\", ax=ax)\n",
+    "    ax.set_title(f\"Feature Importance – {name}\", fontweight=\"bold\")\n",
+    "    ax.set_xlabel(\"Score\")\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "80de774a",
+   "metadata": {},
+   "source": [
+    "## 9. Save Best Model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a5455a64",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "best_name  = \"XGBoost\" if xgb_m[\"F1-Score\"] >= rf_m[\"F1-Score\"] else \"Random Forest\"\n",
+    "best_model = xgb if best_name == \"XGBoost\" else rf\n",
+    "\n",
+    "artifact = {\"model\": best_model, \"feature_names\": feature_names, \"model_name\": best_name}\n",
+    "joblib.dump(artifact, \"model.pkl\")\n",
+    "print(f\"💾 Best model ({best_name}) saved as model.pkl\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8063ebb5",
+   "metadata": {},
+   "source": [
+    "## 10. Quick Inference Test"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0df203db",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "loaded    = joblib.load(\"model.pkl\")\n",
+    "model_    = loaded[\"model\"]\n",
+    "feat_ord  = loaded[\"feature_names\"]\n",
+    "\n",
+    "# Sample row: Type=M(2), slightly elevated torque, high tool wear\n",
+    "sample = pd.DataFrame([[2, 298.5, 308.6, 1551, 65.0, 220]], columns=feat_ord)\n",
+    "pred   = model_.predict(sample)[0]\n",
+    "prob   = model_.predict_proba(sample)[0][1]\n",
+    "\n",
+    "print(f\"Prediction : {'⚠️ FAILURE' if pred == 1 else '✅ No Failure'}\")\n",
+    "print(f\"Probability: {prob*100:.1f}%\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python [conda env:base] *",
+   "language": "python",
+   "name": "conda-base-py"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.13.9"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
